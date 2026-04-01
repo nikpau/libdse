@@ -1,12 +1,12 @@
 # Speech Enhancement via Denoising Autoencoder
 
-A PyTorch implementation of a **Denoising Autoencoder (DAE)** for single-channel speech enhancement, following the approach of Lu et al. (2012) — *Speech Enhancement Based on Deep Denoising Autoencoder*.
+A PyTorch implementation of a **Denoising Autoencoder (DAE)** for single-channel speech enhancement, following the approach of Lu et al. (2012) - *Speech Enhancement Based on Deep Denoising Autoencoder*.
 
 ---
 
 ## The Idea
 
-Real-world speech is almost never clean.  Recordings captured in cars, open offices, or outdoor environments are corrupted by additive noise — fan hum, traffic, background chatter — that degrades both intelligibility and downstream processing (ASR, speaker verification, etc.).
+Real-world speech is almost never clean.  Recordings captured in cars, open offices, or outdoor environments are corrupted by additive noise - fan hum, traffic, background chatter - that degrades both intelligibility and downstream processing (ASR, speaker verification, etc.).
 
 A **denoising autoencoder** addresses this by learning a mapping from *noisy* spectral features back to *clean* spectral features.  During training the model sees pairs `(noisy_mel, clean_mel)` and is penalised for any reconstruction error.  At inference time only the noisy side is available; the encoder compresses it into a latent representation, and the decoder projects that representation back to a clean estimate.
 
@@ -21,8 +21,8 @@ Noisy speech                              Clean speech estimate
 
 Working in the **mel-filterbank** domain rather than raw waveforms brings two advantages:
 
-1. **Perceptual alignment** — mel spacing mirrors how the human auditory system resolves pitch, so the model optimises a representation that is directly meaningful for speech quality.
-2. **Dimensionality reduction** — a 40- or 80-bin mel spectrum is far smaller than a full FFT, which makes training faster and less prone to over-fitting.
+1. **Perceptual alignment**: mel spacing mirrors how the human auditory system resolves pitch, so the model optimises a representation that is directly meaningful for speech quality.
+2. **Dimensionality reduction**: a 40- or 80-bin mel spectrum is far smaller than a full FFT, which makes training faster and less prone to over-fitting.
 
 The plan is to synthesise noisy training data by mixing LibriSpeech utterances with environmental noise corpora (e.g. MUSAN, DEMAND), pre-process both the clean and noisy streams through the same feature pipeline, and train the DAE to reconstruct the clean features from the noisy ones.
 
@@ -66,7 +66,7 @@ Complex spectrogram  (n_fft/2 + 1, n_frames)
 Log-mel power spectrogram  (n_mels, n_frames)
    │
    ▼  Sliding window of width chunks_per_feature
-Individual samples  (n_mels, chunks_per_feature)
+Individual samples  (combined_mels, combined_frames)  
    │
    ▼  Stacked & saved as UUID-named .npy shards
 Preprocessed archive  (entry_point/preprocessed/*.npy)
@@ -82,11 +82,11 @@ from dae.data.dataprep import LibriSpeechDataset
 
 ds = LibriSpeechDataset(Path("data/train-clean-100"))
 ds.prepare(
-    n_cpu=8,          # worker processes (1 = single-threaded)
-    n_mels=80,        # mel filterbank bins
-    chunksize=25,     # STFT window length [ms]
-    overlap=10,       # STFT hop length [ms]
-    chunks_per_feature=20,  # number of chunks forming one input sample for training
+    n_cpu=8,               # worker processes (1 = single-threaded)
+    n_mels=80,             # mel filterbank bins
+    chunksize=25,          # STFT window length [ms]
+    overlap=10,            # STFT hop length [ms]
+    chunks_per_feature=7,  # number of chunks forming one input sample for training
 )
 
 # ds is a PyTorch IterableDataset — plug straight into DataLoader
@@ -96,7 +96,7 @@ loader = DataLoader(ds, batch_size=64)
 
 Each item yielded is a `torch.Tensor` of shape `(n_mels, chunks_per_feature)`.
 
-> **Note on multi-processing:** Each worker process is initialised with all BLAS/OpenMP thread-count environment variables set to `1` to prevent thread oversubscription.  With `n_cpu` workers you get exactly `n_cpu` active threads, which gives linear scaling up to the physical core count.
+> **Note on multi-processing:** Each worker process is initialised with full BLAS/OpenMP thread-count, so oversubscription is probable.  In practice this doesn't seem to cause significant slow-downs, but if it does become an issue the `SampleWarehouse` class can be modified to call `os.environ["OMP_NUM_THREADS"] = "1"` in its worker initializer.
 
 ### Key Classes
 
