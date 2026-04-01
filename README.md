@@ -86,7 +86,7 @@ ds.prepare(
     n_mels=80,        # mel filterbank bins
     chunksize=25,     # STFT window length [ms]
     overlap=10,       # STFT hop length [ms]
-    chunks_per_feature=20,  # time frames per training sample
+    chunks_per_feature=20,  # number of chunks forming one input sample for training
 )
 
 # ds is a PyTorch IterableDataset — plug straight into DataLoader
@@ -139,7 +139,6 @@ uv run pytest
 
 The test suite covers:
 
-- FLAC → WAV conversion (happy path, missing source, corrupt file)
 - `SampleWarehouse` initialisation, sharding, mel-bin counts, array shapes, checksum recording
 - `LibriSpeechDataset` entry-point validation, iterator guards, tensor shapes
 - Single-process vs. multi-process output equivalence
