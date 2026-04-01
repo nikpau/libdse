@@ -1,0 +1,33 @@
+[project]
+name = "speech-enhancement"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "librosa>=0.11.0",
+    "numpy>=2.4.3",
+    "ruff",
+    "torch>=2.11.0",
+    "tqdm>=4.67.3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 80
+
+[tool.ruff.format]
+line-ending = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
