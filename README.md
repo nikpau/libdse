@@ -51,7 +51,8 @@ speech_enhancement/
 
 ### Feature Extraction Pipeline (`src/dae/data/dataprep.py`)
 
-The pre-processing pipeline converts raw LibriSpeech FLAC files into ready-to-train NumPy arrays:
+Feature extraction happens **on the fly** during iteration — no pre-processing
+or caching step is needed.  For each FLAC file the following pipeline runs:
 
 ```
 FLAC file
@@ -63,47 +64,46 @@ PCM waveform
 Complex spectrogram  (n_fft/2 + 1, n_frames)
    │
    ▼  Mel filterbank projection
-Log-mel power spectrogram  (n_mels, n_frames)
+Power spectrogram  (n_mels, n_frames)
    │
-   ▼  Sliding window of width chunks_per_feature
-Individual samples  (combined_mels, combined_frames)  
-   │
-   ▼  Stacked & saved as UUID-named .npy shards
-Preprocessed archive  (entry_point/preprocessed/*.npy)
+   ▼  Sliding window of width chunks_per_feature (non-overlapping)
+Flat samples  shape: (n_mels * chunks_per_feature,)
 ```
 
-An MD5 checksum is recorded for every shard in a `.preproc` manifest at the dataset root, allowing re-use of pre-processed data across runs without re-computation.
-
-Processing can be run **single-threaded** or **multi-processed**:
+Each sample is yielded as a ``(sample, label)`` pair.  Without noise both
+elements are the same clean row.  With noise, ``sample`` is the corrupted
+version and ``label`` is the clean reference.
 
 ```python
 from pathlib import Path
 from dae.data.dataprep import LibriSpeechDataset
 
-ds = LibriSpeechDataset(Path("data/train-clean-100"))
-ds.prepare(
-    n_cpu=8,               # worker processes (1 = single-threaded)
-    n_mels=80,             # mel filterbank bins
-    chunksize=25,          # STFT window length [ms]
-    overlap=10,            # STFT hop length [ms]
-    chunks_per_feature=7,  # number of chunks forming one input sample for training
+# Clean speech only
+ds = LibriSpeechDataset(
+    entry_point=Path("data/train-clean-100"),
+    n_mels=40,             # mel filterbank bins
+    chunksize=16,          # STFT window length [ms]
+    overlap=8,             # STFT hop length [ms]
+    chunks_per_feature=7,  # frames per sample
 )
 
 # ds is a PyTorch IterableDataset — plug straight into DataLoader
 from torch.utils.data import DataLoader
 loader = DataLoader(ds, batch_size=64)
+for sample, label in loader:
+    ...  # sample == label for clean-only mode
 ```
 
-Each item yielded is a `torch.Tensor` of shape `(n_mels, chunks_per_feature)`.
-
-> **Note on multi-processing:** Each worker process is initialised with full BLAS/OpenMP thread-count, so oversubscription is probable.  In practice this doesn't seem to cause significant slow-downs, but if it does become an issue the `SampleWarehouse` class can be modified to call `os.environ["OMP_NUM_THREADS"] = "1"` in its worker initializer.
+Each item is a flat `numpy` row of length `n_mels * chunks_per_feature`
+(converted to a `torch.Tensor` by the `DataLoader`).
 
 ### Key Classes
 
 | Class | Role |
 |---|---|
-| `SampleWarehouse` | Splits FLAC paths into ≤128 shards, runs the mel feature extraction, writes `.npy` binaries and `.preproc` manifest |
-| `LibriSpeechDataset` | `torch.utils.data.IterableDataset` wrapper; validates the corpus root, owns a `SampleWarehouse`, guards iteration behind a `prepare()` call |
+| `LibriSpeechDataset` | `torch.utils.data.IterableDataset` that validates the corpus root and streams mel features from FLAC files on iteration |
+| `DEMANDNoiseDataset` | Loads and concatenates DEMAND noise recordings into a single array for on-the-fly noisy speech synthesis |
+| `DEMANDNoiseType` | Enum of DEMAND environment names; pass a subset to `LibriSpeechDataset` to select noise types |
 
 ---
 
@@ -139,9 +139,9 @@ uv run pytest
 
 The test suite covers:
 
-- `SampleWarehouse` initialisation, sharding, mel-bin counts, array shapes, checksum recording
-- `LibriSpeechDataset` entry-point validation, iterator guards, tensor shapes
-- Single-process vs. multi-process output equivalence
+- `LibriSpeechDataset` entry-point validation and `EntryPointError` handling
+- Iterator output: pair shapes, dtype, clean label identity, and noisy-label distinction
+- `__repr__` and `__len__` contract
 
 ---
 
@@ -165,7 +165,7 @@ Pass the `data/train-clean-100` directory as `entry_point` to `LibriSpeechDatase
 
 ## Roadmap
 
-- [ ] Synthesise noisy training pairs (mix LibriSpeech + noise corpus)
+- [x] Synthesise noisy training pairs (mix LibriSpeech + DEMAND noise corpus)
 - [ ] Implement the DAE encoder–decoder architecture (I will try a VAE)
 - [ ] Training loop with reconstruction loss (MSE on mel features)
 - [ ] Evaluation metrics: PESQ, STOI, SI-SDR on a held-out test set

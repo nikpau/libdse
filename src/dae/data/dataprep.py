@@ -8,386 +8,218 @@ Overview
 --------
 The module provides two main abstractions:
 
-1. **SampleWarehouse** — converts raw FLAC audio files into persistent
-   log-mel filterbank feature arrays stored as ``.npy`` shards on disk.
-   Processing state is tracked via a ``.preproc`` manifest so that
-   pre-processing is never repeated unnecessarily.  Both single-threaded
-   (``slice_sp``) and multi-process (``slice_mp``) execution modes are
-   supported; worker processes are initialised with BLAS/OpenMP thread
-   counts capped to 1 to prevent oversubscription.
+1. :class:`LibriSpeechDataset` — a :class:`torch.utils.data.IterableDataset`
+   that streams log-mel power spectrogram features directly from raw FLAC
+   files at iteration time.  No pre-processing step is required; the STFT
+   and mel projection are computed on the fly for each utterance.
+   Each iteration step yields a ``(sample, label)`` pair of flat
+   :class:`numpy.ndarray` rows with length ``n_mels * chunks_per_feature``.
 
-2. **LibriSpeechDataset** — a :class:`torch.utils.data.IterableDataset`
-   wrapper around :class:`SampleWarehouse`.  Calling :meth:`prepare`
-   triggers pre-processing and marks the dataset ready; subsequent
-   iteration yields individual log-mel feature tensors of shape
-   ``(n_mels, chunks_per_feature)``.
+2. :class:`DEMANDNoiseDataset` — loads and concatenates DEMAND background
+   noise recordings.  Used by :class:`LibriSpeechDataset` to synthesise
+   noisy speech at a configurable SNR during iteration.
 
 Helper utilities
 ----------------
-- ``_md5_checksum`` — MD5 digest of a saved ``.npy`` array, used to
-  populate the ``.preproc`` manifest.
+- :func:`add_noise_snr` — mix a clean signal with noise at a target
+  signal-to-noise ratio (dB), with automatic peak normalisation.
 
 """
 
-import uuid
-import torch
-import hashlib
 import librosa
 import numpy as np
-import multiprocessing as mp
 
-from tqdm import tqdm
-from torch import Tensor
+from enum import Enum
 from pathlib import Path
-from warnings import warn
+from numpy import random
 from typing import Generator
-from datetime import datetime
 from numpy.typing import NDArray
 from torch.utils.data import IterableDataset
 
 
 class EntryPointError(Exception):
-    """Raised when the dataset entry point is not a valid LibriSpeech root directory.
+    """Raised when the dataset entry point is not a valid LibriSpeech root.
 
-    The LibriSpeech root is expected to contain exactly one sub-directory
-    named ``LibriSpeech``.  Any other structure indicates either a wrong
-    path or a manually altered dataset layout.
+    The expected layout is a directory containing exactly one child named
+    ``LibriSpeech/``.  Any deviation indicates a wrong path or a manually
+    altered dataset.
     """
 
     pass
 
 
-class ShapeMismatchError(Exception):
-    """Raised when an array's shape does not match the expected page shape.
+class DEMANDNoiseType(Enum):
+    """Folder-name identifiers for the `DEMAND <https://doi.org/10.5281/zenodo.1227120>`_ noise dataset.
 
-    Reserved for shape validation in future buffer implementations.
+    Each member's value is the exact directory name inside the DEMAND
+    archive, which follows the pattern ``<CATEGORY><NAME>_<FS>k``.  Pass a
+    sub-set of members to :class:`DEMANDNoiseDataset` to restrict which
+    noise environments are loaded.
     """
 
-    pass
+    KITCHEN = "DKITCHEN_16k"
+    LIVING = "DLIVING_16k"
+    WASHING = "DWASHING_16k"
+    FIELD = "NFIELD_16k"
+    PARK = "NPARK_16k"
+    RIVER = "NRIVER_16k"
+    HALLWAY = "OHALLWAY_16k"
+    MEETING = "OMEETING_16k"
+    OFFICE = "OOFFICE_16k"
+    CAFETERIA = "PCAFETER_16k"
+    RESTAURANT = "PRESTO_16k"
+    STATION = "PSTATION_16k"
+    SQUARE = "SPSQUARE_16k"
+    TRAFFIC = "STRAFFIC_16k"
+    BUS = "TBUS_16k"
+    CAR = "TCAR_16k"
+    METRO = "TMETRO_16k"
 
 
-class SampleWarehouse:
-    """Converts raw FLAC audio files into persistent log-mel filterbank feature arrays.
+class DEMANDNoiseDataset:
+    """Loads and exposes DEMAND background-noise recordings as a single array.
 
-    This class is the pre-processing engine consumed by :class:`LibriSpeechDataset`.
-    It splits a list of FLAC source files into at most 128 equal-sized shards and,
-    for each shard, applies the following pipeline:
+    The `DEMAND <https://doi.org/10.5281/zenodo.1227120>`_ dataset contains
+    18 real-world noise environments, each recorded on 16 channels at 16 kHz.
+    Only channel 1 (``ch1.wav``) is used here.  All selected recordings are
+    concatenated end-to-end into :attr:`noise` so that callers can slice
+    arbitrary-length segments without managing individual files.
 
-    1. Load each FLAC at the target sampling rate.
-    2. Compute the Short-Time Fourier Transform (STFT).
-    3. Project onto a mel filterbank to obtain a log-mel power spectrogram.
-    4. Slide a fixed-width window across the time axis to extract samples.
-    5. Stack samples and save to a UUID-named ``.npy`` binary.
-
-    Processing state is tracked via a ``.preproc`` manifest written to the
-    dataset root.  If a non-empty manifest already exists the warehouse sets
-    :attr:`processing_done` to ``True``.
-
-    :param flac_paths: Ordered list of FLAC source files to preprocess.
-    :type flac_paths: list[:class:`pathlib.Path`]
-    :param entry_point: Root directory of the LibriSpeech dataset.  Preprocessed
-        ``.npy`` files and the ``.preproc`` manifest are stored here.
+    :param entry_point: Directory that directly contains the per-environment
+        sub-directories (e.g. ``DKITCHEN_16k/``, ``TCAR_16k/``, …).
     :type entry_point: :class:`pathlib.Path`
-    :param sample_rate: Target sampling rate in Hz used when loading audio.
-    :type sample_rate: int
+    :param noise_types: Noise environments to load.  Every requested type
+        must have a matching sub-directory under *entry_point*.
+    :type noise_types: list[:class:`DEMANDNoiseType`]
+
+    :raises EntryPointError: If any requested environment directory is missing
+        under *entry_point*.
     """
 
     def __init__(
-        self, flac_paths: list[Path], entry_point: Path, sample_rate: int
+        self, entry_point: Path, noise_types: list[DEMANDNoiseType]
     ) -> None:
-        """Initialise the warehouse from a list of FLAC source paths.
+        """Validate *entry_point* and load all requested noise recordings.
 
-        :param flac_paths: List of FLAC source files to preprocess.
-        :type flac_paths: list[:class:`pathlib.Path`]
-        :param entry_point: Root directory of the LibriSpeech dataset.
+        :param entry_point: Root directory of the DEMAND dataset.
         :type entry_point: :class:`pathlib.Path`
-        :param sample_rate: Target sampling rate in Hz.
-        :type sample_rate: int
+        :param noise_types: Environments to include.
+        :type noise_types: list[:class:`DEMANDNoiseType`]
+        :raises EntryPointError: If a required environment directory is absent.
         """
-        self.flac_paths = flac_paths
+        # Each environment is a 16-channel recording; only channel 1 is used.
+        filename = "ch01.wav"
 
-        # Split into at most 128 equal-sized shards.
-        # numpy handles len(flac_paths) < 128 gracefully
-        # by returning smaller shards.
-        self.path_splits = np.array_split(
-            np.asarray(flac_paths, dtype=object),
-            indices_or_sections=128,
-        )
+        self.fs = 16_000  # 16 kHz — fixed for the whole DEMAND dataset
 
-        # Sampling rate of the samples in the warehouse
-        # (fixed for entire dataset)
-        self.fs = sample_rate
+        all_dirs = [d.name for d in entry_point.iterdir()]
+        required_noise_type_dirs = [t.value for t in noise_types]
+        if not all(d in all_dirs for d in required_noise_type_dirs):
+            raise EntryPointError(
+                "DEMAND entry point is missing required environment "
+                f"directories.\n\n"
+                f"Available: {sorted(all_dirs)}\n"
+                f"Requested: {sorted(required_noise_type_dirs)}"
+            )
 
-        # Entry point for the dataset:
-        self.entry_point = entry_point
+        data_dirs = [
+            directory
+            for directory in entry_point.iterdir()
+            if directory.name in required_noise_type_dirs
+        ]
 
-        # Generated .npy sample banks
-        self.npy_files = []
+        self.target_files = []
+        for directory in data_dirs:
+            self.target_files.extend(directory.rglob(filename))
 
-        # When the pre-processing of the data is finished,
-        # all .npy array checksums are saved in a .preproc
-        # at the entry point of the data set. Here, we look
-        # for it, and set the `processing_done` flag if it's
-        # there. If not we create an empty file.
-        self.processing_done = False
-        self.preproc_file = entry_point / ".preproc"
-        if self.preproc_file.exists() and self.preproc_file.stat().st_size == 0:
-            warn("Empty `.preproc` file found. Re-run preprocessing.")
-        if (
-            self.preproc_file.exists()
-            and not self.preproc_file.stat().st_size == 0
-        ):
-            warn("Non-empty `.preproc` file found. Prepocessing already done.")
-            self.processing_done = True
-        if not self.preproc_file.exists():
-            with open(self.preproc_file, "a") as f:
-                f.write(
-                    "LIBRISPEECH PREPROCESSOR ARCHIVE || "
-                    f"CREATED AT {datetime.now()}\n"
-                )
-            preprocessed_dir = entry_point / "preprocessed"
-            preprocessed_dir.mkdir(exist_ok=True)
-            self.pre_process_save_path = preprocessed_dir
+        self.noise = self._expand_noise()
 
     def __repr__(self) -> str:
-        """Return an unambiguous string representation of the warehouse.
+        """Return a concise string representation.
 
-        :return: String of the form
-            ``SampleWarehouse(n_files=N, fs=F, processing_done=B)``.
+        :return: ``DEMANDNoiseDataset(fs=F, noise_samples=N)``
         :rtype: str
         """
         return (
-            f"SampleWarehouse("
-            f"n_files={len(self.flac_paths)}, "
-            f"fs={self.fs}, "
-            f"processing_done={self.processing_done})"
+            f"DEMANDNoiseDataset(fs={self.fs}, noise_samples={len(self.noise)})"
         )
 
-    @staticmethod
-    def _impl_slicer_worker(
-        flac_paths: NDArray[np.object_],
-        entry_point: Path,
-        fs: int,
-        n_mels: int,
-        chunksize: int,  # [ms]
-        overlap: int,  # [ms]
-        chunks_per_feature: int,
-    ) -> tuple[str, str]:
-        """Process one shard of FLAC files into a single ``.npy`` feature array.
+    def _expand_noise(self) -> NDArray[np.float32]:
+        """Load all target WAV files and concatenate them into a single array.
 
-        For each file in *flac_paths*:
-
-        1. Load audio at *fs* Hz.
-        2. Compute the STFT with a Hann window of *chunksize* ms.
-        3. Project onto a mel filterbank (shape ``(n_mels, n_frames)``).
-        4. Slide a non-overlapping window of *chunks_per_feature* frames
-           across the time axis; each window becomes one sample.
-
-        All samples from the shard are stacked and saved as a single
-        UUID-named ``.npy`` file inside ``entry_point/preprocessed/``.
-
-        :param flac_paths: Shard of FLAC file paths to process.
-        :type flac_paths: :class:`numpy.ndarray` of :class:`pathlib.Path`
-        :param entry_point: Dataset root directory (must contain
-            ``preprocessed/`` sub-directory).
-        :type entry_point: :class:`pathlib.Path`
-        :param fs: Target sampling rate in Hz.
-        :type fs: int
-        :param n_mels: Number of mel filterbank bins.
-        :type n_mels: int
-        :param chunksize: STFT window length in milliseconds.
-        :type chunksize: int
-        :param overlap: STFT hop length in milliseconds.
-        :type overlap: int
-        :param chunks_per_feature: Number of time frames per output sample.
-        :type chunks_per_feature: int
-        :return: Tuple of ``(file_path, md5_checksum)`` for the saved array.
-        :rtype: tuple[str, str]
+        :return: 1-D float32 array of all noise samples concatenated in order.
+        :rtype: :class:`numpy.ndarray`
         """
-        window_length = int(fs / 1000 * chunksize)  # [samples]
-        hop_length = int(fs / 1000 * overlap)  # [samples]
-        # Build mel filter banks: shape (n_mels, 1 + n_fft // 2)
-        mel_bank = librosa.filters.mel(
-            sr=fs, n_fft=window_length, n_mels=n_mels
-        )
-
         samples = []
-        for flac_file in flac_paths:
-            y, _ = librosa.load(flac_file, mono=True)
-            # STFT: shape (1 + n_fft // 2, n_frames), complex-valued
-            stft = librosa.core.stft(
-                y=y,
-                n_fft=window_length,
-                win_length=window_length,
-                hop_length=hop_length,
-                window="hann",
-            )
-
-            # mel_spec: (n_mels, n_frames) Power spectrum
-            mel_spec = mel_bank @ np.abs(stft) ** 2
-
-            # Slide a window of `chunks_per_feature` frames across time.
-            # Each window forms one input sample of shape
-            # (n_mels, chunks_per_feature).
-            n_frames = mel_spec.shape[1]
-            for i in range(
-                0, n_frames - chunks_per_feature + 1, chunks_per_feature
-            ):
-                samples.append(mel_spec[:, i : i + chunks_per_feature])
-
-        # Stack into (n_samples, n_mels, chunks_per_feature)
-        out = np.stack(samples, axis=0)
-        fname = f"{uuid.uuid4().hex}.npy"
-        fpath = entry_point / "preprocessed" / fname
-        np.save(fpath, out)
-        fpath_str = str(fpath)
-        return fpath_str, _md5_checksum(fpath_str)
-
-    def _impl_slicer_worker_wrapper(args):
-        """Wrapper for _impl_slicer_worker to unpack arguments from a tuple."""
-        return SampleWarehouse._impl_slicer_worker(*args)
-
-    def slice_sp(
-        self,
-        n_mels: int,
-        chunksize: int,  # [ms]
-        overlap: int,  # [ms]
-        chunks_per_feature: int,
-    ) -> None:
-        """Pre-process all FLAC shards single-threaded and collect ``.npy`` outputs.
-
-        Iterates over :attr:`path_splits`, skips empty shards, calls
-        :meth:`_impl_slicer_worker` for each non-empty shard, records the
-        resulting file path and MD5 checksum in the ``.preproc`` manifest,
-        and appends the path to :attr:`npy_files`.
-
-        :param n_mels: Number of mel filterbank bins.
-        :type n_mels: int
-        :param chunksize: STFT window length in milliseconds.
-        :type chunksize: int
-        :param overlap: STFT hop length in milliseconds.
-        :type overlap: int
-        :param chunks_per_feature: Number of time frames per output sample.
-        :type chunks_per_feature: int
-        """
-        for path_list in tqdm(
-            self.path_splits,
-            total=len(self.path_splits),
-            unit=" shard",
-        ):
-            if len(path_list) == 0:  # array_split may produce empty shards
-                continue
-            path, checksum = SampleWarehouse._impl_slicer_worker(
-                flac_paths=path_list,
-                entry_point=self.entry_point,
-                fs=self.fs,
-                n_mels=n_mels,
-                chunksize=chunksize,
-                overlap=overlap,
-                chunks_per_feature=chunks_per_feature,
-            )
-            with open(self.preproc_file, "a") as f:
-                f.write(f"{path} [md5 checksum: {checksum}]\n")
-            self.npy_files.append(Path(path))
-
-    def slice_mp(
-        self,
-        n_mels: int,
-        chunksize: int,  # [ms]
-        overlap: int,  # [ms]
-        chunks_per_feature: int,
-        n_cpu: int = 4,
-    ) -> None:
-        """Pre-process all FLAC shards multi-processed and
-        collect ``.npy`` outputs.
-
-        Iterates over :attr:`path_splits`, skips empty shards, calls
-        :meth:`_impl_slicer_worker` for each non-empty shard, records the
-        resulting file path and MD5 checksum in the ``.preproc`` manifest,
-        and appends the path to :attr:`npy_files`.
-
-        :param n_mels: Number of mel filterbank bins.
-        :type n_mels: int
-        :param chunksize: STFT window length in milliseconds.
-        :type chunksize: int
-        :param overlap: STFT hop length in milliseconds.
-        :type overlap: int
-        :param chunks_per_feature: Number of time frames per output sample.
-        :type chunks_per_feature: int
-        :param n_cpu: Number of processes for multi-processing
-        :type n_cpu: int
-        """
-        non_empty_splits = [s for s in self.path_splits if len(s) > 0]
-        arglist = [
-            (  # Positional args for _impl_slicer_worker. Order must match.
-                split,
-                self.entry_point,
-                self.fs,
-                n_mels,
-                chunksize,
-                overlap,
-                chunks_per_feature,
-            )
-            for split in non_empty_splits
-        ]
-        with mp.Pool(n_cpu) as pool:
-            results = list(
-                tqdm(
-                    pool.imap_unordered(
-                        SampleWarehouse._impl_slicer_worker_wrapper, arglist
-                    ),
-                    total=len(arglist),
-                    unit=" shard",
-                )
-            )
-        with open(self.preproc_file, "a") as f:
-            for path, checksum in results:
-                f.write(f"{path} [md5 checksum: {checksum}]\n")
-        self.npy_files = [Path(path) for path, _ in results]
+        for f in self.target_files:
+            y, _ = librosa.load(f, sr=self.fs, mono=True)
+            samples.append(y)
+        return np.ravel(samples)
 
 
 class LibriSpeechDataset(IterableDataset):
-    """Iterable PyTorch dataset for the
-    `LibriSpeech <https://www.openslr.org/12>`_ ASR corpus.
+    """Iterable PyTorch dataset for the `LibriSpeech <https://www.openslr.org/12>`_ ASR corpus.
 
-    Wraps a :class:`SampleWarehouse` that pre-processes raw FLAC audio into
-    persistent ``.npy`` log-mel filterbank arrays.  Calling :meth:`prepare`
-    triggers the pre-processing step; afterwards the dataset can be iterated
-    to yield individual spectrogram samples as :class:`torch.Tensor` objects.
+    Wraps a :class:`LibriSpeechPreprocessor` that converts raw FLAC audio into
+    persistent ``.npy`` log-mel filterbank arrays.  Call :meth:`prepare` once
+    before iterating; each iteration step yields a ``(sample, label)`` tuple
+    of :class:`torch.Tensor` objects with shape
+    ``(n_mels * chunks_per_feature,)``.
+
+    When *noise_types* is provided the dataset synthesizes noisy inputs on the
+    fly: the yielded tuple is ``(noisy_sample, clean_sample)`` at a randomly
+    chosen SNR of 5 or 10 dB.
 
     .. rubric:: Typical usage
 
     .. code-block:: python
 
-        ds = LibriSpeechDataset(Path("data/train-clean-100"))
-        ds.prepare(n_cpu=4, n_mels=80, chunksize=25, overlap=10,
-                   chunks_per_feature=20)
+        ds = LibriSpeechDataset(
+            entry_point=Path("data/train-clean-100"),
+            n_mels=40, chunksize=16, overlap=8, chunks_per_feature=7,
+        )
+        ds.prepare(n_cpu=4)
         loader = DataLoader(ds, batch_size=32)
-        for batch in loader:
-            model(batch)
+        for clean, label in loader:
+            loss = criterion(model(clean), label)
 
-    :param entry_point: Path to the LibriSpeech root directory whose sole
-        child directory is named ``LibriSpeech``.
+    :param entry_point: LibriSpeech root directory.  Must contain a single
+        child directory named ``LibriSpeech/``.
     :type entry_point: :class:`pathlib.Path`
-    :param batch_size: Number of samples per training batch.  Stored for
-        downstream use; actual batching is handled by
-        :class:`~torch.utils.data.DataLoader`.
-    :type batch_size: int
+    :param chunksize: STFT window length in milliseconds.
+    :type chunksize: int
+    :param overlap: STFT hop length in milliseconds.
+    :type overlap: int
+    :param n_mels: Number of mel filterbank bins.
+    :type n_mels: int
+    :param chunks_per_feature: Number of consecutive time frames per sample.
+    :type chunks_per_feature: int
+    :param noise_types: DEMAND noise environments to mix in during iteration.
+        When ``None`` the dataset yields clean speech only.
+    :type noise_types: list[:class:`DEMANDNoiseType`] or None
+    :param DEMAND_entry_point: Root directory of the DEMAND dataset.  Required
+        when *noise_types* is not ``None``.
+    :type DEMAND_entry_point: :class:`pathlib.Path` or None
 
-    :raises EntryPointError: If ``entry_point`` is not a directory or does not
-        contain a ``LibriSpeech`` sub-directory.
+    :raises EntryPointError: If *entry_point* is not a directory or does not
+        contain a ``LibriSpeech/`` sub-directory.
     """
 
     def __init__(
         self,
         entry_point: Path,
+        chunksize: int = 16,
+        overlap: int = 8,
+        n_mels: int = 40,
+        chunks_per_feature: int = 7,
+        noise_types: list[DEMANDNoiseType] | None = None,
+        DEMAND_entry_point: Path | None = None,
     ) -> None:
-        """Validate the dataset root and initialise the :class:`SampleWarehouse`.
+        """Validate *entry_point* and collect source FLAC paths.
 
-        :param entry_point: Path to the LibriSpeech root directory.
-        :type entry_point: :class:`pathlib.Path`
-        :raises EntryPointError: If ``entry_point`` is not a directory or does
-            not contain a ``LibriSpeech`` child directory.
+        See class docstring for parameter descriptions.
+
+        :raises EntryPointError: If *entry_point* is not a valid LibriSpeech root.
         """
         super().__init__()
         if not entry_point.is_dir() or "LibriSpeech" not in {
@@ -401,129 +233,232 @@ class LibriSpeechDataset(IterableDataset):
                 "to this Dataset's `entry_point`."
             )
 
-        self.fs = 16_000  # 16 kHz sampling rate
+        self.chunksize = chunksize
+        self.overlap = overlap
+        self.n_mels = n_mels
+        self.chunks_per_feature = chunks_per_feature
 
-        # Materialise the glob so the list can be passed to SampleWarehouse
+        self.noise_types = noise_types
+        if self.noise_types is not None:
+            DEMAND_entry_point = DEMAND_entry_point or Path("data/noise/DEMAND")
+            self.noise = DEMANDNoiseDataset(
+                entry_point=DEMAND_entry_point, noise_types=noise_types
+            ).noise
+        else:
+            self.noise = None
+
+        self.fs = 16_000  # 16 kHz; fixed for the whole LibriSpeech corpus
+
+        # Materialise the glob eagerly so the list can be reused without
+        # re-scanning the file system on every access.
         self._source_flac_paths: list[Path] = list(entry_point.rglob("*.flac"))
 
-        self.swh = SampleWarehouse(
-            self._source_flac_paths, entry_point, self.fs
-        )
-
-        # Set to True by prepare(); guards __iter__ against premature use.
-        self.is_ready = False
-
     def __repr__(self) -> str:
-        """Return an unambiguous string representation of the dataset.
+        """Return a concise string representation.
 
-        :return: String of the form
-            ``LibriSpeechDataset(n_files=M, is_ready=B)``.
+        :return: ``LibriSpeechDataset(n_files=M, n_mels=N, chunks_per_feature=C)``
         :rtype: str
         """
         return (
             f"LibriSpeechDataset("
             f"n_files={len(self._source_flac_paths)}, "
-            f"is_ready={self.is_ready})"
+            f"n_mels={self.n_mels}, "
+            f"chunks_per_feature={self.chunks_per_feature})"
         )
 
     def __len__(self) -> None:
-        """Raise :exc:`NotImplementedError` — the dataset length is not known exactly.
+        """Not implemented — the dataset length cannot be determined cheaply.
 
-        The total duration of LibriSpeech is only known approximately, so
-        the exact number of fixed-size chunks cannot be determined without
-        scanning every file.  Callers should iterate until :exc:`StopIteration`
-        rather than calling ``len()``.
+        The exact number of fixed-size chunks depends on the duration of every
+        individual audio file.  Scanning all files upfront would be
+        prohibitively slow, so ``len()`` is intentionally unsupported.
+        Use the :class:`~torch.utils.data.DataLoader` and iterate until
+        :exc:`StopIteration`.
 
         :raises NotImplementedError: Always.
         """
         raise NotImplementedError(
-            "The exact length of the LibriSpeech is not known exactly."
+            "len() is not supported for LibriSpeechDataset. "
+            "Iterate until StopIteration instead."
         )
 
-    def __iter__(self) -> Generator[Tensor, None, None]:
-        """Yield one page of mel-filterbank feature tensors.
+    def __iter__(self) -> Generator[tuple[NDArray, NDArray], None, None]:
+        """Yield ``(sample, label)`` array pairs by streaming each FLAC file.
 
-        Retrieves the next populated page from the internal :class:`PageBuffer`,
-        converts it to a :class:`torch.Tensor`, and returns it.  Raises
-        :exc:`StopIteration` once the buffer is exhausted.
+        For every utterance the STFT and mel projection are computed on the
+        fly, then the resulting spectrogram is split into non-overlapping
+        windows of *chunks_per_feature* frames.  Each window becomes one row
+        yielded by the iterator.
 
-        :return: Feature tensor of shape ``(batch_size, *page_shape)``.
-        :rtype: :class:`torch.Tensor`
-        :raises StopIteration: When no more pages are available.
+        When *noise_types* is set, the pair is ``(noisy_row, clean_row)`` at
+        a randomly chosen SNR from ``{5, 10}`` dB.  Otherwise both elements
+        of the pair are the same clean row.
+
+        :return: ``(sample, label)`` pair, each a flat 1-D array of length
+            ``n_mels * chunks_per_feature``.
+        :rtype: Generator[tuple[:class:`numpy.ndarray`, :class:`numpy.ndarray`], None, None]
         """
-        if not self.is_ready:
-            raise RuntimeError(
-                "Dataset is not prepared for streaming. "
-                "Did you prepare it using the `prepare()` method?"
+        window_length = int(self.fs / 1000 * self.chunksize)  # [samples]
+        hop_length = int(self.fs / 1000 * self.overlap)  # [samples]
+        # Build mel filter banks: shape (n_mels, 1 + n_fft // 2)
+        mel_bank = librosa.filters.mel(
+            sr=self.fs, n_fft=window_length, n_mels=self.n_mels
+        )
+        for file in self._source_flac_paths:
+            y_orig, _ = librosa.load(file, mono=True)
+
+            mel_pspec_orig = self._extract_features(
+                y_orig, window_length, hop_length, mel_bank
             )
-        for file in self.swh.npy_files:
-            arr = np.load(file, mmap_mode="r")
-            for item in arr:
-                yield torch.from_numpy(item.copy())
 
-    def prepare(
-        self,
-        n_cpu: int,
-        n_mels: int,
-        chunksize: int,  # [ms]
-        overlap: int,  # [ms]
-        chunks_per_feature: int,
-    ) -> None:
-        """Pre-process all FLAC files and mark the dataset as ready for streaming.
-
-        Delegates to :meth:`SampleWarehouse.slice_sp` and sets
-        :attr:`is_ready` to ``True`` on completion.  If the warehouse already
-        has ``processing_done=True`` the pre-processing step is skipped but
-        :attr:`is_ready` is still set.
-
-        :param n_cpu: *(Reserved)* Number of CPU workers.  Currently unused;
-            processing runs single-threaded via :meth:`SampleWarehouse.slice_sp`.
-        :type n_cpu: int
-        :param n_mels: Number of mel filterbank bins.
-        :type n_mels: int
-        :param chunksize: STFT window length in milliseconds.
-        :type chunksize: int
-        :param overlap: STFT hop length in milliseconds.
-        :type overlap: int
-        :param chunks_per_feature: Number of time frames per output sample.
-        :type chunks_per_feature: int
-        """
-        if not self.swh.processing_done:
-            if n_cpu == 1:
-                self.swh.slice_sp(
-                    n_mels=n_mels,
-                    chunksize=chunksize,
-                    overlap=overlap,
-                    chunks_per_feature=chunks_per_feature,
+            if self.noise_types is not None:
+                y_noise = add_noise_snr(
+                    signal=y_orig,
+                    noise=self._noise_for_sample(y_orig),
+                    snr_db=random.choice([5, 10]),
                 )
+                mel_pspec_noise = self._extract_features(
+                    y_noise, window_length, hop_length, mel_bank
+                )
+                for orig_row, noisy_row in zip(mel_pspec_orig, mel_pspec_noise):
+                    yield orig_row, noisy_row
             else:
-                self.swh.slice_mp(
-                    n_mels=n_mels,
-                    chunksize=chunksize,
-                    overlap=overlap,
-                    chunks_per_feature=chunks_per_feature,
-                    n_cpu=n_cpu,
-                )
+                for orig_row in mel_pspec_orig:
+                    yield orig_row, orig_row
 
-        self.is_ready = True
+    def _extract_features(
+        self,
+        sample: NDArray[np.float32],
+        window_length: int,
+        hop_length: int,
+        mel_bank: NDArray[np.float32],
+    ) -> NDArray[np.float32]:
+        """Compute a log-mel power spectrogram and split it into fixed-length chunks.
+
+        :param sample: Mono audio waveform.
+        :type sample: :class:`numpy.ndarray` of float32
+        :param window_length: STFT window size in samples.
+        :type window_length: int
+        :param hop_length: STFT hop size in samples.
+        :type hop_length: int
+        :param mel_bank: Pre-computed mel filterbank matrix of shape
+            ``(n_mels, 1 + window_length // 2)``.
+        :type mel_bank: :class:`numpy.ndarray` of float32
+        :return: Array of shape ``(n_chunks, n_mels * chunks_per_feature)``.
+        :rtype: :class:`numpy.ndarray` of float32
+        """
+        # STFT: shape (1 + n_fft // 2, n_frames), complex-valued
+        samples = []
+        stft = librosa.core.stft(
+            y=sample,
+            n_fft=window_length,
+            win_length=window_length,
+            hop_length=hop_length,
+            window="hann",
+        )
+
+        # mel_spec: (n_mels, n_frames) Power spectrum
+        mel_spec = mel_bank @ np.abs(stft) ** 2
+
+        # Slide a window of `chunks_per_feature` frames across time.
+        # Each window forms one input sample of shape
+        # (n_mels, chunks_per_feature).
+        n_frames = mel_spec.shape[1]
+        for i in range(
+            0,
+            n_frames - self.chunks_per_feature + 1,
+            self.chunks_per_feature,
+        ):
+            samples.append(mel_spec[:, i : i + self.chunks_per_feature])
+
+        # Stack into (n_samples, n_features)
+        out = np.stack(samples, axis=0)
+        return out.reshape((out.shape[0], -1))
+
+    def _noise_for_sample(
+        self, sample: NDArray[np.float32]
+    ) -> NDArray[np.float32]:
+        """Return a randomly positioned noise segment of equal length to *sample*.
+
+        :param sample: Clean audio waveform whose length determines the
+            size of the returned noise slice.
+        :type sample: :class:`numpy.ndarray` of float32
+        :return: Noise segment with the same number of samples as *sample*.
+        :rtype: :class:`numpy.ndarray` of float32
+        """
+        max_noise_start = len(self.noise) - len(sample)
+        noise_start = random.randint(0, max_noise_start)
+        return self.noise[noise_start : noise_start + len(sample)]
 
 
-def _md5_checksum(filename: str):
-    """Calculate the MD5 checksum of a file."""
-    array = np.load(filename)
-    md5 = hashlib.md5()
-    md5.update(array.tobytes())
-    return md5.hexdigest()
+def add_noise_snr(
+    signal: NDArray[np.float32], noise: NDArray[np.float32], snr_db: float
+) -> NDArray[np.float32]:
+    """Mix *noise* into *signal* at a target signal-to-noise ratio.
+
+    The noise array is first padded (wrap mode) or truncated to match the
+    length of *signal*, then scaled so that the resulting SNR equals
+    *snr_db*.  If the mixture clips (peak > 1.0) it is peak-normalised.
+
+    .. math::
+
+        \\text{SNR}_{\\text{dB}} = 10 \\log_{10}\\!
+            \\left(\\frac{P_{\\text{signal}}}{P_{\\text{noise}}}\\right)
+
+    :param signal: Clean mono waveform, assumed to be in ``[-1, 1]``.
+    :type signal: :class:`numpy.ndarray` of float32
+    :param noise: Noise waveform.  May be shorter or longer than *signal*.
+    :type noise: :class:`numpy.ndarray` of float32
+    :param snr_db: Desired signal-to-noise ratio in decibels.
+    :type snr_db: float
+    :return: Noisy mixture with the same length as *signal*, peak-normalised
+        if clipping occurs.
+    :rtype: :class:`numpy.ndarray` of float32
+    """
+
+    # Match noise length to signal (wrap-pad if shorter, truncate if longer).
+    if len(noise) < len(signal):
+        noise = np.pad(noise, (0, len(signal) - len(noise)), "wrap")
+    else:
+        noise = noise[: len(signal)]
+
+    # Power = mean squared amplitude.
+    p_signal = np.mean(signal**2)
+    p_noise = np.mean(noise**2)
+
+    # Derive the noise power that satisfies the target SNR, then scale.
+    p_target_noise = p_signal / (10 ** (snr_db / 10))
+    scaling_factor = np.sqrt(p_target_noise / p_noise)
+
+    noisy_signal = signal + (noise * scaling_factor)
+
+    # Peak-normalise to prevent clipping.
+    max_val = np.max(np.abs(noisy_signal))
+    if max_val > 1.0:
+        noisy_signal = noisy_signal / max_val
+
+    return noisy_signal
 
 
 if __name__ == "__main__":
+    from torch.utils.data import DataLoader
+    import time
+
     dataset = LibriSpeechDataset(
         entry_point=Path("data/train-clean-100"),
+        noise_types=[DEMANDNoiseType.KITCHEN, DEMANDNoiseType.CAFETERIA],
     )
-    dataset.prepare(
-        n_cpu=1,
-        n_mels=40,
-        chunksize=16,
-        overlap=8,
-        chunks_per_feature=7,
-    )
+    # dataset.prepare(
+    #     n_cpu=1,
+    #     n_mels=40,
+    #     chunksize=16,
+    #     overlap=8,
+    #     chunks_per_feature=7,
+    # )
+    loader = DataLoader(dataset, batch_size=512)
+    loader_iter = iter(loader)
+    for _ in range(500):
+        start = time.perf_counter()
+        batch = next(loader_iter)
+        print(batch[0].shape, batch[1].shape)
+        print(f"Time per batch: {time.perf_counter() - start:.6f} seconds")
