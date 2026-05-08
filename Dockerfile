@@ -31,9 +31,10 @@ RUN pip install --no-cache-dir \
 COPY src/ src/
 COPY models/ models/
 
+# Copy DEMAND dataset
+COPY data/noise/DEMAND/ data/noise/DEMAND/
+
 # Install the package and all dependencies declared in pyproject.toml.
-# torch is already present so pip will skip it; --no-deps is intentionally
-# removed so every dependency (including tensorboard) is installed.
 RUN pip install --no-cache-dir . \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*

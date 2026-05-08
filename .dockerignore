@@ -15,9 +15,6 @@ build/
 data/train-clean-100/
 data/test-clean/
 
-# DEMAND noise data — mount at runtime via -v if the noise-mix tab is needed
-data/noise/
-
 # TensorBoard runs and experiment plots
 runs/
 plots/
