@@ -27,25 +27,16 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir \
         torch --index-url https://download.pytorch.org/whl/cpu
 
-# Install the rest of the project dependencies (torch is already satisfied
-# above, so pip will skip it and install everything else).
-RUN pip install --no-cache-dir \
-        "gradio>=6.11.0" \
-        "librosa>=0.11.0" \
-        "numpy>=2.4.3" \
-        "pesq>=0.0.4" \
-        "pystoi>=0.4.1" \
-        "tqdm>=4.67.3" \
-        "matplotlib>=3.10.9" \
-    && apt-get purge -y --auto-remove build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 # ── Application source ────────────────────────────────────────────────────────
 COPY src/ src/
 COPY models/ models/
 
-# Install the local package in non-editable mode (no source-watching needed).
-RUN pip install --no-cache-dir --no-deps .
+# Install the package and all dependencies declared in pyproject.toml.
+# torch is already present so pip will skip it; --no-deps is intentionally
+# removed so every dependency (including tensorboard) is installed.
+RUN pip install --no-cache-dir . \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 EXPOSE 7860
