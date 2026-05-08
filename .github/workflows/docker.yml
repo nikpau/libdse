@@ -68,6 +68,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
           script: |
+            set -euo pipefail
             IMAGE="ghcr.io/${{ github.repository }}:latest"
             CONTAINER="speech-enhancement"
 
@@ -81,7 +82,7 @@ jobs:
             docker run -d \
               --name "${CONTAINER}" \
               --restart unless-stopped \
-              -p 7860:7860 \
+              -p 127.0.0.1:7860:7860 \
               "${IMAGE}"
 
             docker image prune -f
