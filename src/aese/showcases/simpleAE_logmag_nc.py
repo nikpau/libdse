@@ -605,5 +605,4 @@ if __name__ == "__main__":
             "Audio is resampled to 16 kHz automatically.</p>"
         )
 
-    # demo.launch(server_name="0.0.0.0", server_port=7860)
-    demo.launch()
+    demo.launch(server_name="0.0.0.0", server_port=7860)
