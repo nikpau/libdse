@@ -470,6 +470,10 @@ if __name__ == "__main__":
                 mix_btn_denoise = gr.Button(
                     "🎲 Mix noise & preview", variant="secondary"
                 )
+                skip_noise_btn = gr.Button(
+                    "⏭️ Skip — use uploaded audio as noisy input",
+                    variant="secondary",
+                )
 
         gr.HTML(
             '<div class="step-badge"><span class="step-num">3</span>'
@@ -511,6 +515,15 @@ if __name__ == "__main__":
                 snr_slider_denoise,
                 demand_path_box_denoise,
             ],
+            outputs=[noisy_preview, mix_denoise_status],
+        )
+
+        skip_noise_btn.click(
+            lambda audio: (
+                audio,
+                "✅  Skipped noise mixing — audio passed through directly.",
+            ),
+            inputs=audio_in,
             outputs=[noisy_preview, mix_denoise_status],
         )
 
@@ -563,4 +576,4 @@ if __name__ == "__main__":
             "Audio is resampled to 16 kHz automatically.</p>"
         )
 
-    demo.launch()
+    demo.launch(server_name="0.0.0.0", server_port=7860)
