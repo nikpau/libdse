@@ -49,7 +49,7 @@ _loaded_model = VanillaAutoEncoder(
 )
 try:
     state = torch.load(
-        f"models/{hp.name}", map_location="cpu", weights_only=True
+        f"models/{hp.name}.pth", map_location="cpu", weights_only=True
     )
     _loaded_model.load_state_dict(state)
 except FileNotFoundError:
@@ -605,4 +605,5 @@ if __name__ == "__main__":
             "Audio is resampled to 16 kHz automatically.</p>"
         )
 
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    # demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch()

@@ -404,5 +404,5 @@ if __name__ == "__main__":
 
         if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss
-            model_path = f"{hp.model_dir}/{hp.name}"
+            model_path = f"{hp.model_dir}/{hp.name}.pth"
             torch.save(autoencoder.state_dict(), model_path)
