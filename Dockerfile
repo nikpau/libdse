@@ -31,9 +31,6 @@ RUN pip install --no-cache-dir \
 COPY src/ src/
 COPY models/ models/
 
-# Copy DEMAND dataset
-COPY data/noise/DEMAND/ data/noise/DEMAND/
-
 # Install the package and all dependencies declared in pyproject.toml.
 RUN pip install --no-cache-dir . \
     && apt-get purge -y --auto-remove build-essential \
