@@ -15,17 +15,15 @@ Pipeline
 
 TensorBoard metrics
 -------------------
-Loss/train          — MSE on the current training mini-batch (smoothed over
-                      100 batches).
-Loss/val_quick      — MSE on ``VAL_BATCHES`` val batches (logged every
-                      ``VAL_EVERY`` train batches).
-SNR/val_quick       — Signal-to-noise ratio improvement (dB) on the quick
-                      val pass: 10·log10(input_noise_power / residual_power).
-Ratio/val_to_train  — val_loss / recent_train_loss; tracks over-fitting.
-GradNorm/encoder    — L2 norm of encoder gradients (health check).
-GradNorm/decoder    — L2 norm of decoder gradients (health check).
-Loss/val_epoch      — Full val-set MSE at end of each epoch.
-SNR/val_epoch       — Full val-set SNR improvement at end of each epoch.
+
+- **Loss/train** — MSE on the current training mini-batch (smoothed over 100 batches).
+- **Loss/val_quick** — MSE on ``VAL_BATCHES`` val batches (logged every ``VAL_EVERY`` train batches).
+- **SNR/val_quick** — Signal-to-noise ratio improvement (dB) on the quick val pass: 10·log₁₀(input_noise_power / residual_power).
+- **Ratio/val_to_train** — val_loss / recent_train_loss; tracks over-fitting.
+- **GradNorm/encoder** — L2 norm of encoder gradients (health check).
+- **GradNorm/decoder** — L2 norm of decoder gradients (health check).
+- **Loss/val_epoch** — Full val-set MSE at end of each epoch.
+- **SNR/val_epoch** — Full val-set SNR improvement at end of each epoch.
 """
 
 import torch

@@ -1,12 +1,21 @@
-"""
-Builds a Gradio testing pipeline that accepts an audio file of any length
-and attempts to de-noise it using a trained :class:`~dae.nets.VanillaAutoEncoder`.
+"""Interactive Gradio demo for the log-magnitude denoising autoencoder.
+
+Launches a two-tab web interface:
+
+* **Denoise** — upload any audio file; the model denoises it frame-by-frame
+  and displays spectrograms of the input and output side-by-side.
+* **Noise mix** — upload clean speech, choose a DEMAND environment and a
+  target SNR, and listen to the resulting noisy mixture.
 
 Usage::
 
-    python -m dae.showcase
+    python -m aese.showcases.simpleAE_logmag_nc
 
-Then open the URL printed to the terminal.
+Then open the URL printed to the terminal (typically http://127.0.0.1:7860).
+
+The demo loads the pre-trained checkpoint from
+``models/simple_autoencoder_logmag_spec_noisy_clean`` relative to the
+current working directory.  Run the script from the repository root.
 """
 
 import random
@@ -38,8 +47,13 @@ _loaded_model = VanillaAutoEncoder(
     hidden_layer_struct=hp.hidden_layer_struct,
     dropout=hp.dropout,
 )
-state = torch.load(f"models/{hp.name}", map_location="cpu", weights_only=True)
-_loaded_model.load_state_dict(state)
+try:
+    state = torch.load(
+        f"models/{hp.name}", map_location="cpu", weights_only=True
+    )
+    _loaded_model.load_state_dict(state)
+except FileNotFoundError:
+    pass  # Weights not found; run python -m aese.train.simpleAE_logmag_nc first.
 _loaded_model.eval()
 
 
@@ -92,8 +106,23 @@ def _reconstruct_audio(
     noisy_sample: NDArray[np.float32],
     cleaned_spectrum: NDArray[np.float32],
 ) -> NDArray[np.float32]:
-    """Helper: Reconstruct Audio from a log-magnitude spectrogram using the phase
-    information of the original noisy input and Griffin-Lim."""
+    """Reconstruct a waveform from a cleaned log-magnitude spectrogram.
+
+    The phase from the original *noisy_sample* is borrowed and applied to
+    the exponentiated cleaned magnitude spectrum, then
+    :func:`librosa.istft` inverts the result.  This avoids the iterative
+    Griffin-Lim procedure while still producing intelligible output.
+
+    :param noisy_sample: Original noisy waveform at :data:`FS` Hz.
+        Its phase is used for reconstruction.
+    :type noisy_sample: :class:`numpy.ndarray` of float32
+    :param cleaned_spectrum: Log-magnitude spectrogram produced by the
+        autoencoder, shape ``(n_frames, n_bins)`` (i.e. transposed relative
+        to the librosa convention).
+    :type cleaned_spectrum: :class:`numpy.ndarray` of float32
+    :return: Reconstructed de-noised waveform at :data:`FS` Hz.
+    :rtype: :class:`numpy.ndarray` of float32
+    """
 
     # log-magnitude spectrogram -> magnitude spectrogram
     cleaned_mag_spectrum = np.maximum(np.exp(cleaned_spectrum), 1e-8).T

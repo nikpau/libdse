@@ -93,7 +93,6 @@ class BaseExtractor(ABC):
 
     @abstractmethod
     def __init__(self):
-        #: Shape of a single feature vector produced by this extractor.
         self.sample_shape: tuple
         self.noise: DEMANDNoiseDataset
         pass
