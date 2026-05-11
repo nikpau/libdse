@@ -1,6 +1,10 @@
 # Autoencoders for Speech Enhancement
 
-A PyTorch implementation of a **Denoising Autoencoder (DAE)** for single-channel speech enhancement, following the approach of Lu et al. (2013) — *Speech Enhancement Based on Deep Denoising Autoencoder* — with architecture choices informed by Nossier et al. (2020) — *An Experimental Analysis of Deep Learning Architectures for Supervised Speech Enhancement*.
+This is the accompanying code for my [blog post on Denoising AutoEncoders](https://iam.nikpau.io/blog/speech_enhancement_3/).
+
+A PyTorch implementation of a **Denoising Autoencoder (DAE)** for single-channel speech enhancement, following the approach of Lu et al. (2013) - *Speech Enhancement Based on Deep Denoising Autoencoder* — with architecture choices informed by Nossier et al. (2020) - *An Experimental Analysis of Deep Learning Architectures for Supervised Speech Enhancement*.
+
+The API documentation can be found [here](dae.nikpau.io/docs/).
 
 ---
 
