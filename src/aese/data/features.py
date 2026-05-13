@@ -571,3 +571,84 @@ class LogMagnitudeSpectrumExtractor(BaseExtractor):
                     torch.from_numpy(orig_row).float(),
                     torch.from_numpy(orig_row).float(),
                 )
+
+
+class RawWaveformExtractor(BaseExtractor):
+    """Raw waveform extractor — no frequency transform applied.
+
+    Splits a mono waveform into non-overlapping windows of *window_length*
+    samples and yields each window directly as a feature vector.  This is the
+    natural companion extractor for time-domain models such as
+    :class:`~aese.nets.WaveUNet` that operate on raw audio rather than
+    spectrograms.
+
+    When *noise* is provided, a noisy mixture is generated with
+    :func:`~aese.data.noise.add_noise_snr` at a random SNR (0, 5, or 10 dB)
+    and the pair becomes ``(noisy_window, clean_window)``; otherwise both
+    elements of the pair are the same clean window.
+
+    :param sampling_rate: Expected sample rate of input waveforms in Hz.
+    :type sampling_rate: int
+    :param window_length: Number of samples per output feature vector.
+    :type window_length: int
+    :param noise: Optional DEMAND noise dataset for on-the-fly noise mixing.
+    :type noise: :class:`~aese.data.noise.DEMANDNoiseDataset` or None
+    """
+
+    def __init__(
+        self,
+        sampling_rate: int,
+        window_length: int,
+        noise: DEMANDNoiseDataset | None,
+    ) -> None:
+        self.fs = sampling_rate
+        self.window_length = window_length
+        self.noise = noise
+
+        #: Shape of each feature vector: ``(window_length,)``.
+        self.sample_shape = (window_length,)
+
+    def __call__(
+        self, sample: NDArray[np.float32]
+    ) -> Generator[tuple[Sample, Label], None, None]:
+        """Yield ``(feature, label)`` pairs for every non-overlapping window.
+
+        The waveform is zero-padded at the end when its length is not an
+        integer multiple of *window_length*, ensuring no samples are silently
+        dropped.
+
+        :param sample: Mono audio waveform at :attr:`fs` Hz.
+        :type sample: :class:`numpy.ndarray` of float32
+        :return: Generator of ``(feature, label)`` tensor pairs, each of shape
+            ``(window_length,)``.
+        :rtype: Generator[tuple[:class:`torch.Tensor`, :class:`torch.Tensor`], None, None]
+        """
+        # Zero-pad so the waveform fills an integer number of windows.
+        if len(sample) % self.window_length != 0:
+            padding = self.window_length - (len(sample) % self.window_length)
+            sample = np.pad(sample, (0, padding), mode="constant")
+
+        if self.noise is not None:
+            y_noise = add_noise_snr(
+                signal=sample,
+                noise=self._noise_for_sample(sample),
+                snr_db=random.choice([0, 5, 10]),
+            )
+            for i in range(
+                0, len(sample) - self.window_length + 1, self.window_length
+            ):
+                noisy_segment = y_noise[i : i + self.window_length]
+                clean_segment = sample[i : i + self.window_length]
+                yield (
+                    torch.from_numpy(noisy_segment).float(),
+                    torch.from_numpy(clean_segment).float(),
+                )
+        else:
+            for i in range(
+                0, len(sample) - self.window_length + 1, self.window_length
+            ):
+                segment = sample[i : i + self.window_length]
+                yield (
+                    torch.from_numpy(segment).float(),
+                    torch.from_numpy(segment).float(),
+                )
