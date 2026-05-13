@@ -1,4 +1,4 @@
-"""Autoencoders for Speech Enhancement (``aese``).
+"""Autoencoders for Speech Enhancement (``libdse``).
 
 This package provides the building blocks for training and deploying
 denoising autoencoders (DAE) for single-channel speech enhancement.
@@ -7,14 +7,14 @@ Sub-packages
 ------------
 .. autosummary::
 
-   aese.data
-   aese.train
-   aese.showcases
+   libdse.data
+   libdse.train
+   libdse.showcases
 
 Top-level modules
 -----------------
 .. autosummary::
 
-   aese.nets
-   aese.metrics
+   libdse.nets
+   libdse.metrics
 """

@@ -10,7 +10,7 @@ Planned API
 -----------
 .. code-block:: python
 
-    from aese.metrics import pesq_score, stoi_score
+    from libdse.metrics import pesq_score, stoi_score
 
     pesq = pesq_score(clean_waveform, enhanced_waveform, fs=8_000)
     stoi = stoi_score(clean_waveform, enhanced_waveform, fs=8_000)
@@ -66,16 +66,16 @@ if __name__ == "__main__":
     import torch
     import librosa
     from pathlib import Path
-    from aese.nets import VanillaAutoEncoder
-    from aese.train.dae import hp
-    from aese.data.librispeech import LibriSpeechDataset
-    from aese.data.noise import (
+    from libdse.nets import VanillaAutoEncoder
+    from libdse.train.dae import hp
+    from libdse.data.librispeech import LibriSpeechDataset
+    from libdse.data.noise import (
         DEMANDNoiseDataset,
         DEMANDNoiseType,
         add_noise_snr,
     )
-    from aese.data.features import LogMagnitudeSpectrumExtractor
-    from aese.showcases.dae import run_pipeline
+    from libdse.data.features import LogMagnitudeSpectrumExtractor
+    from libdse.showcases.dae import run_pipeline
 
     noise = DEMANDNoiseDataset(
         entry_point=Path("data/noise/DEMAND"),

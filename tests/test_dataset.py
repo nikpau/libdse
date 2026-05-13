@@ -25,9 +25,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from aese.data.err import EntryPointError
-from aese.data.noise import DEMANDNoiseDataset, DEMANDNoiseType, add_noise_snr
-from aese.data.librispeech import LibriSpeechDataset
+from libdse.data.err import EntryPointError
+from libdse.data.noise import DEMANDNoiseDataset, DEMANDNoiseType, add_noise_snr
+from libdse.data.librispeech import LibriSpeechDataset
 
 # ---------------------------------------------------------------------------
 # Shared test constants

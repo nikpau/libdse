@@ -43,8 +43,8 @@ from typing import Generator
 from numpy.typing import NDArray
 from torch.utils.data import IterableDataset
 
-from aese.data.err import EntryPointError
-from aese.data.features import BaseExtractor
+from libdse.data.err import EntryPointError
+from libdse.data.features import BaseExtractor
 
 
 class LibriSpeechDataset(IterableDataset):
@@ -212,8 +212,8 @@ class LibriSpeechDataset(IterableDataset):
 if __name__ == "__main__":
     from pathlib import Path
     from torch.utils.data import DataLoader
-    from aese.data.features import LogMelPowerSpectrumExtractor
-    from aese.data.noise import DEMANDNoiseDataset, DEMANDNoiseType
+    from libdse.data.features import LogMelPowerSpectrumExtractor
+    from libdse.data.noise import DEMANDNoiseDataset, DEMANDNoiseType
     import time
 
     # Build a noise dataset covering all DEMAND environments.

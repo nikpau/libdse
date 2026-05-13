@@ -40,13 +40,13 @@ Three feature variants are implemented, each with its own training script:
      - Extractor
    * - ``simpleAE_logmag_nc``
      - Log-magnitude STFT frame
-     - :class:`~aese.data.features.LogMagnitudeSpectrumExtractor`
+     - :class:`~libdse.data.features.LogMagnitudeSpectrumExtractor`
    * - ``simpleAE_power_nc``
      - Power STFT frame
-     - :class:`~aese.data.features.PowerSpectrumExtractor`
+     - :class:`~libdse.data.features.PowerSpectrumExtractor`
    * - ``simpleAE_mel_nc``
      - Log-mel power window
-     - :class:`~aese.data.features.LogMelPowerSpectrumExtractor`
+     - :class:`~libdse.data.features.LogMelPowerSpectrumExtractor`
 
 The log-magnitude variant (``simpleAE_logmag_nc``) is the production model.
 

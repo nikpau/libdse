@@ -9,7 +9,7 @@ Launches a two-tab web interface:
 
 Usage::
 
-    python -m aese.showcases.simpleAE_logmag_nc
+    python -m libdse.showcases.simpleAE_logmag_nc
 
 Then open the URL printed to the terminal (typically http://127.0.0.1:7860).
 
@@ -29,9 +29,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 from pathlib import Path
-from aese.nets import VanillaAutoEncoder
-from aese.train.dae import hp
-from aese.data.noise import DEMANDNoiseDataset, DEMANDNoiseType, add_noise_snr
+from libdse.nets import VanillaAutoEncoder
+from libdse.train.dae import hp
+from libdse.data.noise import DEMANDNoiseDataset, DEMANDNoiseType, add_noise_snr
 
 import torch
 
@@ -53,7 +53,7 @@ try:
     )
     _loaded_model.load_state_dict(state)
 except FileNotFoundError:
-    pass  # Weights not found; run python -m aese.train.simpleAE_logmag_nc first.
+    pass  # Weights not found; run python -m libdse.train.simpleAE_logmag_nc first.
 _loaded_model.eval()
 
 

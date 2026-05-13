@@ -6,7 +6,7 @@ Training
 
 Run the log-magnitude model (recommended starting point)::
 
-    python -m aese.train.simpleAE_logmag_nc
+    python -m libdse.train.simpleAE_logmag_nc
 
 The checkpoint with the best validation loss is saved to
 ``models/simple_autoencoder_logmag_spec_noisy_clean``.
@@ -20,7 +20,7 @@ Gradio Demo
 
 A pre-trained checkpoint is included in ``models/``. Launch the demo::
 
-    python -m aese.showcases.simpleAE_logmag_nc
+    python -m libdse.showcases.simpleAE_logmag_nc
 
 Open http://127.0.0.1:7860 in a browser.  Two tabs are available:
 
@@ -44,10 +44,10 @@ Using the API directly
     from pathlib import Path
     import librosa
     import torch
-    from aese.nets import VanillaAutoEncoder
-    from aese.data.features import LogMagnitudeSpectrumExtractor
-    from aese.data.noise import DEMANDNoiseDataset, DEMANDNoiseType
-    from aese.data.librispeech import LibriSpeechDataset
+    from libdse.nets import VanillaAutoEncoder
+    from libdse.data.features import LogMagnitudeSpectrumExtractor
+    from libdse.data.noise import DEMANDNoiseDataset, DEMANDNoiseType
+    from libdse.data.librispeech import LibriSpeechDataset
     from torch.utils.data import DataLoader
 
     # --- Build noise dataset -------------------------------------------------

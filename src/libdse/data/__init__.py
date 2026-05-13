@@ -4,8 +4,8 @@ Modules
 -------
 .. autosummary::
 
-   aese.data.features
-   aese.data.librispeech
-   aese.data.noise
-   aese.data.err
+   libdse.data.features
+   libdse.data.librispeech
+   libdse.data.noise
+   libdse.data.err
 """

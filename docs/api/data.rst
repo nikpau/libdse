@@ -1,7 +1,7 @@
 Data Utilities
 ==============
 
-The ``aese.data`` sub-package contains everything needed to load and
+The ``libdse.data`` sub-package contains everything needed to load and
 pre-process audio data for training:
 
 .. contents:: Modules in this sub-package
@@ -10,39 +10,39 @@ pre-process audio data for training:
 
 ----
 
-Feature Extraction — ``aese.data.features``
+Feature Extraction — ``libdse.data.features``
 --------------------------------------------
 
-.. automodule:: aese.data.features
+.. automodule:: libdse.data.features
    :members:
    :undoc-members: False
    :show-inheritance:
 
 ----
 
-LibriSpeech Dataset — ``aese.data.librispeech``
+LibriSpeech Dataset — ``libdse.data.librispeech``
 ------------------------------------------------
 
-.. automodule:: aese.data.librispeech
+.. automodule:: libdse.data.librispeech
    :members:
    :undoc-members: False
    :show-inheritance:
 
 ----
 
-DEMAND Noise Dataset — ``aese.data.noise``
+DEMAND Noise Dataset — ``libdse.data.noise``
 ------------------------------------------
 
-.. automodule:: aese.data.noise
+.. automodule:: libdse.data.noise
    :members:
    :undoc-members: False
    :show-inheritance:
 
 ----
 
-Exceptions — ``aese.data.err``
+Exceptions — ``libdse.data.err``
 -------------------------------
 
-.. automodule:: aese.data.err
+.. automodule:: libdse.data.err
    :members:
    :show-inheritance:

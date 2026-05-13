@@ -1,6 +1,6 @@
 Evaluation Metrics
 ==================
 
-.. automodule:: aese.metrics
+.. automodule:: libdse.metrics
    :members:
    :undoc-members: False

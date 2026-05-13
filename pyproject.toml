@@ -1,7 +1,7 @@
 [project]
-name = "autoencoders-speech-enhancement"
+name = "libdse"
 version = "0.1.0"
-description = "Autoencoders for speech enhancement"
+description = "Library for deep-learning-based speech enhancement models"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

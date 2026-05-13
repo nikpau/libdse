@@ -91,7 +91,7 @@ At inference time each frame is denoised independently. To recover a waveform th
 ```
 speech_enhancement/
 ├── src/
-│   └── aese/
+│   └── libdse/
 │       ├── nets.py                          # VanillaAutoEncoder definition
 │       ├── metrics.py                       # Evaluation metrics (PESQ, STOI)
 │       ├── data/
@@ -150,7 +150,7 @@ data/
 ## Training
 
 ```bash
-python -m aese.train.simpleAE_logmag_nc
+python -m libdse.train.simpleAE_logmag_nc
 ```
 
 The checkpoint with the best validation loss is saved to `models/simple_autoencoder_logmag_spec_noisy_clean`.
@@ -162,7 +162,7 @@ The checkpoint with the best validation loss is saved to `models/simple_autoenco
 A pre-trained checkpoint is included in `models/`. Launch the interactive demo with:
 
 ```bash
-python -m aese.showcases.simpleAE_logmag_nc
+python -m libdse.showcases.simpleAE_logmag_nc
 ```
 
 The app exposes two tabs:
