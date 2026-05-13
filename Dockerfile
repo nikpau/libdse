@@ -40,4 +40,4 @@ RUN pip install --no-cache-dir . \
 EXPOSE 7860
 
 # Gradio serves on 0.0.0.0:7860 (set explicitly in the showcase script).
-CMD ["python", "-m", "libdse.showcases.simpleAE_logmag_nc"]
+CMD ["python", "-m", "libdse.showcases.dae"]
