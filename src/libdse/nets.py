@@ -190,6 +190,9 @@ class WaveUNet(nn.Module):
         """
         super().__init__()
         self.n_layers = n_layers
+        self.F_c = F_c
+        self.f_d = f_d
+        self.f_u = f_u
 
         # ------------------------------------------------------------------
         # Encoder (downsampling path)
@@ -204,14 +207,16 @@ class WaveUNet(nn.Module):
         # Channel schedule: [1, F_c, 2*F_c, ..., n_layers*F_c]
         # (the leading 1 is the single raw-audio input channel)
         self.encoder = nn.ModuleList()
-        channels_ds = [1] + [F_c * i for i in range(1, n_layers + 1)]
+        encoder_channels = [1] + [F_c * i for i in range(1, n_layers + 1)]
+        print(encoder_channels)
 
-        for ch_in, ch_out in pairwise(channels_ds):
+        for ch_in, ch_out in pairwise(encoder_channels):
             self.encoder.append(
                 nn.Conv1d(
                     in_channels=ch_in,
                     out_channels=ch_out,
                     kernel_size=f_d,
+                    padding="same",
                 )
             )
 
@@ -225,9 +230,10 @@ class WaveUNet(nn.Module):
         # the decoder a richer starting point.
         self.bottleneck = nn.Sequential(
             nn.Conv1d(
-                in_channels=channels_ds[-1],
+                in_channels=encoder_channels[-1],
                 out_channels=F_c * (n_layers + 1),
                 kernel_size=f_d,
+                padding="same",
             ),
             nn.LeakyReLU(0.2),
         )
@@ -239,20 +245,26 @@ class WaveUNet(nn.Module):
         # feature map is *concatenated* with the corresponding encoder output
         # (skip connection), so the input channel count is the sum of both.
         #
-        # Decoder-side channels *before* concatenation (bottleneck down to 1):
-        #   [(n_layers+1)*F_c, n_layers*F_c, ..., 1*F_c]
-        # After concatenation with encoder skip (channels_ds in reverse):
-        #   channels_us[i] = decoder_ch[i] + encoder_ch[i]
+        # Channel schedule for decoder layer k (0-indexed, 0 = deepest):
+        #   ch_in  = (2*(n_layers-k)) * F_c
+        #          = upsampled bottleneck/prev-decoder  +  encoder skip
+        #          = (n_layers-k+1)*F_c  +  (n_layers-k)*F_c
+        #   ch_out = (n_layers-k) * F_c
         self.decoder = nn.ModuleList()
-        channels_us = [F_c * i for i in range(n_layers + 1, 0, -1)]
-        channels_us = [
-            channels_us[i] + channels_ds[i] for i in range(n_layers, 0, -1)
+        decoder_in_channels = [
+            (F_c * (k + 1)) + encoder_channels[k]
+            for k in range(n_layers, 0, -1)
         ]
-
-        for ch_in, ch_out in pairwise(channels_us):
+        decoder_out_channels = encoder_channels[::-1]
+        print(decoder_in_channels)
+        print(decoder_out_channels)
+        for k in range(n_layers):
             self.decoder.append(
                 nn.Conv1d(
-                    in_channels=ch_in, out_channels=ch_out, kernel_size=f_u
+                    in_channels=decoder_in_channels[k],
+                    out_channels=decoder_out_channels[k],
+                    kernel_size=f_u,
+                    padding="same",
                 )
             )
 
@@ -269,7 +281,8 @@ class WaveUNet(nn.Module):
             nn.Tanh(),
         )
 
-    def center_crop(self, input: Tensor, target_shape: int) -> Tensor:
+    @staticmethod
+    def center_crop(input: Tensor, target_shape: int) -> Tensor:
         """Crop the time axis of *input* symmetrically to *target_shape*.
 
         Because ``Conv1d`` without padding shortens the time axis by
@@ -287,14 +300,8 @@ class WaveUNet(nn.Module):
         :return: Tensor of shape ``(B, C, T_out)``.
         :rtype: :class:`torch.Tensor`
         """
-        input_shape = input.shape[-1]
-        shape_difference = target_shape - input_shape
-
-        # Integer floor division ensures we always remove a whole number of
-        # samples; the off-by-one remainder (for odd differences) is
-        # silently absorbed by Python's negative-index slicing.
-        lr_offset = shape_difference // 2  # samples to remove from each end
-        return input[:, :, lr_offset:-lr_offset]
+        start = (input.shape[-1] - target_shape) // 2
+        return input[:, :, start : start + target_shape]
 
     def stack_channels(self, input1: Tensor, input2: Tensor) -> Tensor:
         """Concatenate two feature maps along the channel dimension.
@@ -354,6 +361,7 @@ class WaveUNet(nn.Module):
         # The raw input is saved so the network can reference the unmodified
         # mixture waveform in the final output layer.
         orig = x.clone()
+        print(x.shape)
 
         # ------------------------------------------------------------------
         # Phase 1 - Encoder (downsampling)
@@ -371,6 +379,7 @@ class WaveUNet(nn.Module):
             # halving the sequence length. This is equivalent to stride-2
             # pooling but keeps the decimation logic separate from learning.
             x = x[:, :, ::2]  # (B, C, T) → (B, C, T//2)
+            print(x.shape)
 
         # ------------------------------------------------------------------
         # Phase 2 - Bottleneck
@@ -379,6 +388,8 @@ class WaveUNet(nn.Module):
         # convolution.  From here on the network must reconstruct fine detail
         # solely from what it learned.
         x = self.bottleneck(x)
+        print(x.shape)
+        print("Decoding")
 
         # ------------------------------------------------------------------
         # Phase 3 - Decoder (upsampling)
@@ -407,6 +418,7 @@ class WaveUNet(nn.Module):
             # back towards F_c.
             x = self.decoder[layer_num](x)
             x = F.leaky_relu(x, 0.2)
+            print(x.shape)
 
         # ------------------------------------------------------------------
         # Phase 4 - Output
@@ -415,14 +427,24 @@ class WaveUNet(nn.Module):
         # learn a residual correction rather than generating the output from
         # scratch.  This biases the model towards the right answer and
         # generally speeds up convergence.
-        second_to_last = self.stack_channels(x, orig)
+        x = self.stack_channels(x, orig)
+        print(x.shape)
 
         # Pointwise conv collapses all channels to one; Tanh keeps amplitudes
         # in [-1, 1], matching the range of normalised audio.
-        output = self.output_layer(second_to_last)
+        output = self.output_layer(x)
 
         # The accompaniment is obtained for free: because output + accompaniment
         # must equal the original mixture, accompaniment = original - output.
         # We crop 'orig' to the (slightly shorter) output length first.
-        output_accompaniment = self.center_crop(orig, output.shape[-1]) - output
+        output_accompaniment = (
+            WaveUNet.center_crop(orig, output.shape[-1]) - output
+        )
         return output, output_accompaniment
+
+
+if __name__ == "__main__":
+    w = WaveUNet(n_layers=12, f_u=5, f_d=15, F_c=24)
+    IN = torch.randn(2, 1, 16384)
+    OUT = w(IN)
+    print(OUT[0].shape, OUT[1].shape)
