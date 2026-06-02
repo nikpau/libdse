@@ -60,6 +60,10 @@
           }
         }
       }
+    },
+    "inference": {
+      "cls": "WaveUNet_Inference",
+      "params": {}
     }
   }
 }
