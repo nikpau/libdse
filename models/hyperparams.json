@@ -4,6 +4,7 @@
     "network": {
       "cls": "VanillaAutoEncoder",
       "params": {
+        "input_dim": 129,
         "hidden_layer_struct": [2048, 500],
         "latent_dim": 180,
         "dropout": 0.0
