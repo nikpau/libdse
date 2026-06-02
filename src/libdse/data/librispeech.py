@@ -119,7 +119,7 @@ class LibriSpeechDataset(IterableDataset):
 
     def __init__(
         self,
-        entry_point: Path,
+        entry_point: Path | str,
         extractor: BaseExtractor,
         sample_rate: int = 16_000,
     ) -> None:
@@ -134,6 +134,8 @@ class LibriSpeechDataset(IterableDataset):
         super().__init__()
 
         # Verify that the directory has the expected LibriSpeech sub-directory.
+        if isinstance(entry_point, str):
+            entry_point = Path(entry_point)
         if not entry_point.is_dir() or "LibriSpeech" not in {
             p.name for p in entry_point.iterdir()
         }:

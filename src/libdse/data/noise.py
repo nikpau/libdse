@@ -146,7 +146,7 @@ class DEMANDNoiseDataset:
 
     def __init__(
         self,
-        entry_point: Path,
+        entry_point: Path | str,
         noise_types: list[DEMANDNoiseType] | DEMANDNoiseType,
         sample_rate: int = 16_000,
     ) -> None:
@@ -168,6 +168,9 @@ class DEMANDNoiseDataset:
 
         # Original DEMAND sample rate is 16 kHz, but we allow the caller to specify a different rate if they want.  librosa will resample on load if needed.
         self.fs = sample_rate
+
+        if isinstance(entry_point, str):
+            entry_point = Path(entry_point)
 
         all_dirs = [d.name for d in entry_point.iterdir()]
         if noise_types == DEMANDNoiseType.ALL:
