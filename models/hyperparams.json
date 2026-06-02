@@ -1,0 +1,63 @@
+{
+  "simple_autoencoder_logmag_spec_noisy_clean": {
+    "name": "Denoising Autoencoder",
+    "network": {
+      "cls": "VanillaAutoEncoder",
+      "params": {
+        "hidden_layer_struct": [2048, 500],
+        "latent_dim": 180,
+        "dropout": 0.0
+      }
+    },
+    "feature_extractor":  {
+      "cls": "LogMagnitudeSpectrumExtractor",
+      "params": {
+        "window_length": 256,
+        "hop_length": 128,
+        "sampling_rate": 8000,
+        "noise_ds": {
+          "cls": "DEMANDNoiseDataset",
+          "params": {
+            "entry_point": "data/noise/DEMAND",
+            "noise_types": {
+              "cls": "DEMANDNoiseType",
+              "type": "ALL"
+            }
+          }
+        }
+      }
+    },
+    "inference": {
+      "cls": "DAE_Inference",
+      "params": {}
+    }
+  },
+  "waveunet": {
+    "name": "Wave-U-Net",
+    "network": {
+      "cls": "WaveUNet",
+      "params": {
+        "n_layers": 12,
+        "f_u": 5,
+        "f_d": 15,
+        "F_c": 24
+      }
+    },
+    "feature_extractor": {
+      "cls": "RawWaveformExtractor",
+      "params": {
+        "window_length": 16384,
+        "noise_ds": {
+          "cls": "DEMANDNoiseDataset",
+          "params": {
+            "entry_point": "data/noise/DEMAND",
+            "noise_types": {
+              "cls": "DEMANDNoiseType",
+              "type": "ALL"
+            }
+          }
+        }
+      }
+    }
+  }
+}
