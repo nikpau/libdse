@@ -205,7 +205,7 @@ class LogMelPowerSpectrumExtractor(BaseExtractor):
         chunks_per_feature: int,
         noise: DEMANDNoiseDataset | None,
     ) -> None:
-        self.fs = sampling_rate
+        self.sampling_rate = sampling_rate
         self.window_length = window_length
         self.hop_length = hop_length
         self.n_mels = n_mels
@@ -215,7 +215,7 @@ class LogMelPowerSpectrumExtractor(BaseExtractor):
         # Build the mel filterbank once at construction time so it is not
         # recomputed on every call.  Shape: (n_mels, 1 + window_length // 2)
         self.mel_bank = librosa.filters.mel(
-            sr=self.fs, n_fft=self.window_length, n_mels=self.n_mels
+            sr=self.sampling_rate, n_fft=self.window_length, n_mels=self.n_mels
         )
 
         #: Flat length of each feature vector: ``n_mels * chunks_per_feature``.
@@ -367,7 +367,7 @@ class PowerSpectrumExtractor(BaseExtractor):
         hop_length: int,
         noise: DEMANDNoiseDataset | None,
     ) -> None:
-        self.fs = sampling_rate
+        self.sampling_rate = sampling_rate
         self.window_length = window_length
         self.hop_length = hop_length
         self.noise = noise
@@ -498,7 +498,7 @@ class LogMagnitudeSpectrumExtractor(BaseExtractor):
         hop_length: int,
         noise: DEMANDNoiseDataset | None,
     ) -> None:
-        self.fs = sampling_rate
+        self.sampling_rate = sampling_rate
         self.window_length = window_length
         self.hop_length = hop_length
         self.noise = noise
