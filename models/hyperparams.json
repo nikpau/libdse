@@ -38,16 +38,17 @@
     "network": {
       "cls": "WaveUNet",
       "params": {
-        "n_layers": 12,
+        "n_layers": 7,
         "f_u": 5,
         "f_d": 15,
-        "F_c": 24
+        "F_c": 16
       }
     },
     "feature_extractor": {
       "cls": "RawWaveformExtractor",
       "params": {
         "window_length": 16384,
+        "sampling_rate": 16000,
         "noise": {
           "cls": "DEMANDNoiseDataset",
           "params": {
