@@ -9,6 +9,7 @@ on:
       - "models/**"
       - "pyproject.toml"
       - ".github/workflows/docker.yml"
+      - "app.py"
 
 env:
   REGISTRY: ghcr.io
@@ -60,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH and 
+      - name: SSH and deploy
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
