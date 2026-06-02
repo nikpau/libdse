@@ -27,6 +27,8 @@ populated at import time from :mod:`libdse.nets`, :mod:`libdse.data.features`,
 
 from fastapi.responses import StreamingResponse
 import librosa
+import numpy as np
+import random
 import torch
 import json
 import io
@@ -41,6 +43,9 @@ import libdse.nets as _nets_module
 import libdse.data.features as _features_module
 import libdse.data.noise as _noise_module
 import libdse.inference as _inference_module
+
+# Path to the DEMAND noise dataset (mounted externally in Docker)
+_DEMAND_PATH = Path("data/noise/DEMAND")
 
 # Flat registry: class/enum name -> resolved object from all known modules
 _REGISTRY: dict[str, type] = {
@@ -179,6 +184,121 @@ async def list_models():
         for key, params in _hyperparameters.items()
     ]
     return {"available_models": _avail}
+
+
+@app.get("/noise-types")
+async def list_noise_types():
+    """Return all available DEMAND noise environment names.
+
+    Only available when the DEMAND dataset is present at the expected path.
+
+    :return: JSON body ``{"available": true, "noise_types": [...]}`` when the
+        dataset is found, or ``{"available": false, "noise_types": []}`` when
+        the dataset directory is absent.
+    :rtype: dict
+    """
+    if not _DEMAND_PATH.exists():
+        return {"available": False, "noise_types": []}
+    noise_types = [
+        t.name
+        for t in _noise_module.DEMANDNoiseType
+        if t != _noise_module.DEMANDNoiseType.ALL
+    ]
+    return {"available": True, "noise_types": noise_types}
+
+
+@app.post("/mix-noise")
+async def mix_noise(
+    noise_type: str,
+    snr_db: float = 10.0,
+    audio_file: UploadFile = File(...),
+):
+    """Mix DEMAND noise into *audio_file* at the requested SNR.
+
+    A random offset into the chosen noise environment is selected so that
+    repeated calls with the same parameters produce different mixtures.
+
+    :param noise_type: Name of a :class:`~libdse.data.noise.DEMANDNoiseType`
+        member (e.g. ``"KITCHEN"``).
+    :type noise_type: str
+    :param snr_db: Desired signal-to-noise ratio in decibels (default 10).
+    :type snr_db: float
+    :param audio_file: Clean mono or stereo audio in any format supported by
+        *libsndfile*.  Stereo is down-mixed to mono.
+    :type audio_file: :class:`~fastapi.UploadFile`
+    :return: Noisy mixture as a streaming WAV attachment named ``noisy.wav``
+        at 16 kHz.
+    :rtype: :class:`~fastapi.responses.StreamingResponse`
+    :raises ~fastapi.HTTPException: 503 if the DEMAND dataset is not mounted;
+        400 for an unknown noise type or unreadable audio; 422 if the audio
+        clip is too short.
+    """
+    if not _DEMAND_PATH.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="DEMAND noise dataset is not available on this server.",
+        )
+
+    try:
+        noise_enum = _noise_module.DEMANDNoiseType[noise_type.upper()]
+    except KeyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown noise type '{noise_type}'. "
+            f"Use GET /noise-types for the list of valid values.",
+        )
+
+    audio_bytes = await audio_file.read()
+    try:
+        waveform, native_sr = sf.read(io.BytesIO(audio_bytes), dtype="float32")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Could not read audio file: {exc}"
+        )
+
+    # Down-mix to mono
+    if waveform.ndim > 1:
+        waveform = waveform.mean(axis=1)
+
+    # Normalise int-range uploads (e.g. 16-bit PCM read as float)
+    if np.max(np.abs(waveform)) > 1.0:
+        waveform = waveform / 32768.0
+
+    _MIX_SR = 16_000
+    if native_sr != _MIX_SR:
+        waveform = librosa.resample(
+            waveform, orig_sr=native_sr, target_sr=_MIX_SR
+        )
+
+    if len(waveform) < 512:
+        raise HTTPException(
+            status_code=422, detail="Audio clip is too short to process."
+        )
+
+    try:
+        noise_ds = _noise_module.DEMANDNoiseDataset(
+            entry_point=_DEMAND_PATH,
+            noise_types=noise_enum,
+            sample_rate=_MIX_SR,
+        )
+        max_start = max(0, len(noise_ds.noise) - len(waveform))
+        noise_start = random.randint(0, max_start)
+        noisy = _noise_module.add_noise_snr(
+            signal=waveform,
+            noise=noise_ds.noise[noise_start : noise_start + len(waveform)],
+            snr_db=snr_db,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    output_buffer = io.BytesIO()
+    sf.write(output_buffer, noisy, _MIX_SR, format="WAV")
+    output_buffer.seek(0)
+    return StreamingResponse(
+        output_buffer,
+        media_type="audio/wav",
+        headers={"Content-Disposition": "attachment; filename=noisy.wav"},
+    )
 
 
 @app.post("/predict")
