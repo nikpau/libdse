@@ -60,6 +60,7 @@ _model_path = Path("models/")
 with open(_model_path / "hyperparams.json", "r") as file:
     _hyperparameters: dict = json.load(file)
 
+_model_names = list(model["name"] for model in _hyperparameters.values())
 _available_models = list(_hyperparameters.keys())
 
 
@@ -90,6 +91,7 @@ async def lifespan(app: FastAPI):
 
     # --- load all models into cache at startup ---
     for model in _available_models:
+        model_name = _hyperparameters[model]["name"]
         model_params = _hyperparameters[model]
         network: torch.nn.Module = _build(model_params["network"])
         network.load_state_dict(
@@ -108,9 +110,9 @@ async def lifespan(app: FastAPI):
             model=network, feature_extractor=feature_extractor
         )
 
-        _model_cache[model] = network
-        _model_cache[f"{model}_feature_extractor"] = feature_extractor
-        _model_cache[f"{model}_pipeline"] = pipeline
+        _model_cache[model_name] = network
+        _model_cache[f"{model_name}_feature_extractor"] = feature_extractor
+        _model_cache[f"{model_name}_pipeline"] = pipeline
 
     # Attach to app state for access in route handlers
     app.state.model_cache = _model_cache
@@ -166,13 +168,17 @@ def _build(cfg: dict):
 
 @app.get("/models")
 async def list_models():
-    """Return the names of all models that are currently loaded.
+    """Return the keys and display names of all models that are currently loaded.
 
-    :return: JSON body ``{"available_models": [...]}`` listing every model
-        name found in ``models/hyperparams.json``.
+    :return: JSON body ``{"available_models": [{"key": ..., "name": ...}, ...]}``
+        listing every model found in ``models/hyperparams.json``.
     :rtype: dict
     """
-    return {"available_models": _available_models}
+    _avail = [
+        {"key": key, "name": params["name"]}
+        for key, params in _hyperparameters.items()
+    ]
+    return {"available_models": _avail}
 
 
 @app.post("/predict")
@@ -204,7 +210,7 @@ async def predict(
             status_code=404,
             detail=f"Requested model `{model}` is not available",
         )
-
+    model = _hyperparameters[model]["name"]  # Map from model key to model name
     pipeline: _inference_module.InferencePipeline = (
         request.app.state.model_cache[f"{model}_pipeline"]
     )
