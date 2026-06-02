@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH and redeploy
+      - name: SSH and 
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -74,17 +74,13 @@ jobs:
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-            docker pull "${IMAGE}"
+            cd ${{ secrets.INFRA_DIR }}
 
-            docker stop "${CONTAINER}" 2>/dev/null
-            docker rm   "${CONTAINER}" 2>/dev/null
+            # Pull the latest image
+            docker compose pull libdse-api
 
-            docker run -d \
-              --name "${CONTAINER}" \
-              --restart unless-stopped \
-              -p 127.0.0.1:7860:7860 \
-              -v /opt/speech-enhancement/data:/app/data:ro \
-              "${IMAGE}"
+            # Restart the container with the new image
+            docker compose up -d libdse-api
 
-            docker image prune -f
-            echo "Deployed ${IMAGE} successfully."
+            # Clean up dangling images
+            docker system prune -f
