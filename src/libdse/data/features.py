@@ -84,7 +84,15 @@ class BaseExtractor(ABC):
     ``(sample, label)`` tensor pair.
 
     .. attribute:: sample_shape
-       :type: tuple[int, ...]
+        :type: tuple[int, ...]
+        :description: Shape of a single feature vector produced by this extractor.
+        Must be set in the subclass ``__init__`` before the instance is passed to
+        :class:`~libdse.data.librispeech.LibriSpeechDataset`.
+
+    .. attribute:: sampling_rate
+        :type: int
+        :description: Expected sampling rate of input waveforms in Hz.  Must be set in the subclass ``__init__`` before the instance is passed to
+        :class:`~libdse.data.librispeech.LibriSpeechDataset`.
 
        Shape of a single feature vector produced by this extractor.  Must be
        set in the subclass ``__init__`` before the instance is passed to
@@ -94,6 +102,7 @@ class BaseExtractor(ABC):
     @abstractmethod
     def __init__(self):
         self.sample_shape: tuple
+        self.sampling_rate: int
         self.noise: DEMANDNoiseDataset
         pass
 
@@ -632,7 +641,7 @@ class RawWaveformExtractor(BaseExtractor):
             y_noise = add_noise_snr(
                 signal=sample,
                 noise=self._noise_for_sample(sample),
-                snr_db=random.choice([0, 5, 10]),
+                snr_db=random.choice([17.5, 12.5, 7.5, 2.5]),
             )
             for i in range(
                 0, len(sample) - self.window_length + 1, self.window_length
