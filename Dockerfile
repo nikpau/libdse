@@ -39,5 +39,5 @@ RUN pip install --no-cache-dir . \
 # ── Runtime ───────────────────────────────────────────────────────────────────
 EXPOSE 7860
 
-# Gradio serves on 0.0.0.0:7860 (set explicitly in the showcase script).
-CMD ["python", "-m", "libdse.showcases.dae"]
+# Run FastAPI on port 7860, binding to localhost behind Caddy.
+CMD ["uvicorn", "src.api:app", "--host", "127.0.0.1", "--port", "7860"]
