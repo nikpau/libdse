@@ -16,7 +16,7 @@
         "window_length": 256,
         "hop_length": 128,
         "sampling_rate": 8000,
-        "noise_ds": {
+        "noise": {
           "cls": "DEMANDNoiseDataset",
           "params": {
             "entry_point": "data/noise/DEMAND",
@@ -48,7 +48,7 @@
       "cls": "RawWaveformExtractor",
       "params": {
         "window_length": 16384,
-        "noise_ds": {
+        "noise": {
           "cls": "DEMANDNoiseDataset",
           "params": {
             "entry_point": "data/noise/DEMAND",
